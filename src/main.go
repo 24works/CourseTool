@@ -4,16 +4,19 @@ import (
 	ASNIColor "CourseTool/asnicolor"
 	_ "CourseTool/configloader" // Import for side effect: load .env
 	"CourseTool/sdtbu"
+	"CourseTool/update" // 引入更新檢查包
 	"CourseTool/wxpush"
 	"bufio" // 用於讀取用戶輸入
 	"fmt"
-	"log"
-	"os"
-	"sort"    // 用於排序時間點
-	"strconv" // 用於字串轉數字
-	"strings" // 用於字串處理
-	"sync"    // 新增：用於併發控制 (互斥鎖)
-	"time"    // 用於時間相關操作
+	"io"       // 用於讀取 HTTP 響應體
+	"log"      // 用於日誌輸出
+	"net/http" // 用於發送 HTTP 請求
+	"os"       // 用於操作環境變數
+	"sort"     // 用於排序時間點
+	"strconv"  // 用於字串轉數字
+	"strings"  // 用於字串處理
+	"sync"     // 用於併發控制 (互斥鎖)
+	"time"     // 用於時間相關操作
 )
 
 // PushTime 結構體用於儲存推送時間的小時和分鐘
@@ -37,13 +40,13 @@ var globalSchedulerStatus = &SchedulerStatus{}
 func printBanner() {
 	fmt.Println(ASNIColor.BrightCyan + `
 =============================================================
-   _____                             _______             _ 
+   _____                             _______             _
   / ____|                           |__   __|           | |
  | |      ___   _   _  _ __  ___   ___ | |  ___    ___  | |
  | |     / _ \ | | | || '__|/ __| / _ \| | / _ \  / _ \ | |
  | |____| (_) || |_| || |   \__ \|  __/| || (_) || (_) || |
   \_____|\___/  \__,_||_|   |___/ \___||_| \___/  \___/ |_|
-                                                           
+
 =============================================================
 作者：Richard Miku
 版本：v1.0.0
@@ -80,29 +83,30 @@ func initializeSession() (*sdtbu.ClientSession, error) {
 }
 
 // fetchAndProcessClassData 獲取並處理課程數據
+// 返回下一節課的詳細資訊 (map[string]interface{}) 或錯誤
 func fetchAndProcessClassData(session *sdtbu.ClientSession) (map[string]interface{}, error) {
 	// 注意：session 對象在多個 Goroutine 中被訪問。
 	// 如果 sdtbu.ClientSession 的方法（如 GetClassbyUserInfo, GetClassbyTime, ParseClassList, SortClass, NextClass）
 	// 修改了其內部狀態且不是併發安全的，則需要在此處或 sdtbu 內部添加互斥鎖。
 	// 目前假設這些方法是讀取為主或內部已處理併發。
-	session.GetClassbyUserInfo()
-	err := session.GetClassbyTime()
+	session.GetClassbyUserInfo()    // 獲取用戶課程資訊
+	err := session.GetClassbyTime() // 獲取按時間分類的課程資訊
 	if err != nil {
 		return nil, fmt.Errorf(ASNIColor.Red+"獲取本周課程失敗: %v"+ASNIColor.Reset, err)
 	}
 
-	classList, err := session.ParseClassList(session.ClassListbyTimeString)
+	classList, err := session.ParseClassList(session.ClassListbyTimeString) // 解析課程列表
 	if err != nil {
 		return nil, fmt.Errorf(ASNIColor.Red+"解析課程列表失敗: %v"+ASNIColor.Reset, err)
 	}
 
-	sortedClassList, sortMsg := session.SortClass(classList)
+	sortedClassList, sortMsg := session.SortClass(classList) // 排序課程列表
 	if len(sortedClassList) == 0 {
 		log.Println(ASNIColor.Yellow + "沒有課程可供排序或顯示: " + sortMsg + ASNIColor.Reset)
 		return nil, nil // 返回 nil 表示沒有課程，但不是錯誤
 	}
 
-	nextClassInfo, err := session.NextClass(sortedClassList)
+	nextClassInfo, err := session.NextClass(sortedClassList) // 獲取下一節課資訊
 	if err != nil {
 		log.Printf(ASNIColor.Yellow+"獲取下一節課失敗: %v"+ASNIColor.Reset, err)
 		return nil, nil // 返回 nil 表示沒有下一節課，但不是錯誤
@@ -117,15 +121,18 @@ func fetchAndProcessClassData(session *sdtbu.ClientSession) (map[string]interfac
 }
 
 // extractClassInfo 從課程資訊 map 中安全地提取數據
+// 返回課程名稱、教師姓名、地點和時間節次
 func extractClassInfo(classInfo map[string]interface{}) (courseName, teacherName, location, timeNumber string) {
 	var ok bool
 
+	// 提取課程名稱
 	courseName, ok = classInfo["KCMC"].(string)
 	if !ok {
 		log.Println(ASNIColor.Yellow + "警告: 課程名稱 (KCMC) 未在 CLINFO 中找到或其類型非字符串。" + ASNIColor.Reset)
 		courseName = "未知課程"
 	}
 
+	// 提取教師姓名，嘗試備用鍵
 	teacherName, ok = classInfo["JSXM"].(string)
 	if !ok {
 		teacherName, ok = classInfo["JSMC"].(string) // 嘗試備用鍵
@@ -135,6 +142,7 @@ func extractClassInfo(classInfo map[string]interface{}) (courseName, teacherName
 		}
 	}
 
+	// 提取上課地點，嘗試備用鍵
 	location, ok = classInfo["JXDD"].(string)
 	if !ok {
 		location, ok = classInfo["JASMC"].(string) // 嘗試備用鍵
@@ -144,6 +152,7 @@ func extractClassInfo(classInfo map[string]interface{}) (courseName, teacherName
 		}
 	}
 
+	// 提取上課節次並格式化
 	var skjcVal interface{}
 	skjcVal, ok = classInfo["SKJC"]
 	if !ok {
@@ -166,12 +175,43 @@ func extractClassInfo(classInfo map[string]interface{}) (courseName, teacherName
 	return
 }
 
+// fetchNoticeContent 從指定 URL 獲取額外備註內容
+func fetchNoticeContent(url string) string {
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Printf(ASNIColor.Red+"錯誤: 無法從 %s 獲取備註內容: %v"+ASNIColor.Reset, url, err)
+		return "Notice Not Applicable" // 獲取失敗時使用預設內容
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf(ASNIColor.Yellow+"警告: 從 %s 獲取備註內容時收到非 200 狀態碼: %d %s"+ASNIColor.Reset, url, resp.StatusCode, resp.Status)
+		return "Notice Not Applicable" // 獲取失敗時使用預設內容
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf(ASNIColor.Red+"錯誤: 讀取從 %s 獲取的備註內容失敗: %v"+ASNIColor.Reset, url, err)
+		return "Notice Not Applicable" // 讀取失敗時使用預設內容
+	}
+
+	content := strings.TrimSpace(string(bodyBytes))
+	if content == "" {
+		log.Println(ASNIColor.Yellow + "警告: 從 coursetool.ric.moe/notice 獲取到的內容為空。將使用預設備註。" + ASNIColor.Reset)
+		return "Notice Not Applicable" // 如果內容為空，使用預設內容
+	}
+	return content
+}
+
 // sendWxPushNotification 檢查環境變數並發送微信推送
 func sendWxPushNotification(courseName, teacherName, location, timeNumber string) {
 	wxAppID := os.Getenv("WXPUSH_APP_ID")
 	wxAppSecret := os.Getenv("WXPUSH_APP_SECRET")
 	wxToUser := os.Getenv("WXPUSH_OPEN_ID")
 	wxTemplateID := os.Getenv("WXPUSH_COURSE_TEMPLATE_ID")
+
+	// 獲取額外備註內容
+	extraNote := fetchNoticeContent("https://coursetool.ric.moe/notice")
 
 	if wxAppID == "" || wxAppSecret == "" || wxToUser == "" || wxTemplateID == "" {
 		log.Println(ASNIColor.Yellow + "警告: 微信推送所需的一個或多個環境變數 (WXPUSH_APP_ID, WXPUSH_APP_SECRET, WXPUSH_OPEN_ID, WXPUSH_COURSE_TEMPLATE_ID) 未設定。將跳過微信推送功能。" + ASNIColor.Reset)
@@ -180,7 +220,7 @@ func sendWxPushNotification(courseName, teacherName, location, timeNumber string
 		fmt.Printf("教師姓名: %s\n", teacherName)
 		fmt.Printf("上課地點: %s\n", location)
 		fmt.Printf("上課節次: %s\n", timeNumber)
-		fmt.Printf("額外備註: %s\n", "N/A")
+		fmt.Printf("額外備註: %s\n", extraNote) // 顯示從 URL 獲取的備註
 		return
 	}
 
@@ -196,7 +236,7 @@ func sendWxPushNotification(courseName, teacherName, location, timeNumber string
 		TeacherName:    teacherName,
 		CourseLocation: location,
 		TimeNumber:     timeNumber,
-		Note:           "記得帶上好心情去上課哦！",
+		Note:           extraNote, // 使用從 URL 獲取的備註
 	}
 
 	err = wxpush.SendCourseReminder(accessToken, courseData)
@@ -372,12 +412,13 @@ func handleUserInput(session *sdtbu.ClientSession) {
 				fmt.Printf(ASNIColor.Red+"錯誤: 無法獲取課程資訊: %v\n"+ASNIColor.Reset, err)
 			} else if classInfo != nil {
 				courseName, teacherName, location, timeNumber := extractClassInfo(classInfo)
+				extraNote := fetchNoticeContent("https://coursetool.ric.moe/notice") // 獲取備註
 				fmt.Println(ASNIColor.BrightYellow + "下一節課程資訊：" + ASNIColor.Reset)
 				fmt.Printf("課程名稱: %s\n", courseName)
 				fmt.Printf("教師姓名: %s\n", teacherName)
 				fmt.Printf("上課地點: %s\n", location)
 				fmt.Printf("上課節次: %s\n", timeNumber)
-				fmt.Printf("額外備註: %s\n", "N/A") // 這裡可以根據需要添加更多資訊
+				fmt.Printf("額外備註: %s\n", extraNote) // 顯示從 URL 獲取的備註
 			} else {
 				fmt.Println(ASNIColor.Yellow + "沒有找到下一節課資訊。" + ASNIColor.Reset)
 			}
@@ -400,7 +441,7 @@ func handleUserInput(session *sdtbu.ClientSession) {
 			} else {
 				fmt.Println(ASNIColor.Yellow + "排程器尚未啟動或已停止。" + ASNIColor.Reset)
 			}
-		case "/clear": // 新增：處理 /clear 命令
+		case "/clear": // 處理 /clear 命令
 			// ANSI escape code to clear the screen and move cursor to home
 			fmt.Print("\033[H\033[2J")
 			printBanner() // 清除後重新打印橫幅
@@ -431,16 +472,21 @@ func handleUserInput(session *sdtbu.ClientSession) {
 }
 
 func main() {
+	// 打印應用程式啟動橫幅
 	printBanner()
 
+	// 初始化 SDTBU 會話並登入
 	session, err := initializeSession()
 	if err != nil {
 		log.Fatalf("%v", err) // 如果會話無法初始化，則終止程式
 	}
 
-	// 在一個新的 Goroutine 中啟動排程器，讓它在背景運行
+	// 調用 update 包中的 CheckForUpdates 函數，檢查應用程式更新
+	update.CheckForUpdates()
+
+	// 在一個新的 Goroutine 中啟動排程器，讓它在背景運行，不阻塞主線程
 	go runScheduler(session)
 
-	// 在主 Goroutine 中處理用戶輸入
+	// 在主 Goroutine 中處理用戶輸入，保持控制台互動
 	handleUserInput(session)
 }
