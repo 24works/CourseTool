@@ -25,8 +25,22 @@ func init() {
 	openID = os.Getenv("WXPUSH_OPEN_ID")
 	courseTemplateID = os.Getenv("WXPUSH_COURSE_TEMPLATE_ID")
 
+	// 檢查是否設定了所有必要的環境變數
+	if appID == "" {
+		log.Printf("WXPUSH 警告: 環境變數 WXPUSH_APP_ID 未設定。")
+	}
+	if appSecret == "" {
+		log.Printf("WXPUSH 警告: 環境變數 WXPUSH_APP_SECRET 未設定。")
+	}
+	if openID == "" {
+		log.Printf("WXPUSH 警告: 環境變數 WXPUSH_OPEN_ID 未設定。")
+	}
+	if courseTemplateID == "" {
+		log.Printf("WXPUSH 警告: 環境變數 WXPUSH_COURSE_TEMPLATE_ID 未設定。")
+	}
+
 	if appID == "" || appSecret == "" || openID == "" || courseTemplateID == "" {
-		log.Fatalf("WXPUSH 錯誤: 一個或多個 WXPUSH 環境變數 (WXPUSH_APP_ID, WXPUSH_APP_SECRET, WXPUSH_OPEN_ID, WXPUSH_COURSE_TEMPLATE_ID) 未設定。")
+		log.Printf("WXPUSH 警告: 一個或多個 WXPUSH 環境變數未設定，相關功能可能無法正常工作。")
 	}
 }
 
@@ -45,8 +59,12 @@ type SendMessageResponse struct {
 	MsgID   int64  `json:"msgid"`
 }
 
-// getAccessToken 函式用於獲取微信公眾號的 access_token
+// GetAccessToken 函式用於獲取微信公眾號的 access_token
 func GetAccessToken() (string, error) {
+	// 在這裡再次檢查，確保在使用前變數已設定
+	if appID == "" || appSecret == "" {
+		return "", fmt.Errorf("獲取 access_token 失敗: WXPUSH_APP_ID 或 WXPUSH_APP_SECRET 未設定。")
+	}
 	url := fmt.Sprintf("https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s", appID, appSecret)
 
 	resp, err := http.Get(url)
@@ -112,6 +130,11 @@ type TemplateMessage struct {
 
 // SendCourseReminder 函式用於發送課程提醒模板消息
 func SendCourseReminder(accessToken string, data CourseReminderData) error {
+	// 在這裡再次檢查，確保在使用前變數已設定
+	if openID == "" || courseTemplateID == "" {
+		return fmt.Errorf("發送課程提醒失敗: WXPUSH_OPEN_ID 或 WXPUSH_COURSE_TEMPLATE_ID 未設定。")
+	}
+
 	// 獲取當前時間，用於 NowTime 欄位
 	currentTime := time.Now().Format("2006年01月02日 15:04")
 
@@ -163,26 +186,3 @@ func SendCourseReminder(accessToken string, data CourseReminderData) error {
 
 	return nil
 }
-
-// func main() {
-// 	// 這裡可以放置測試程式碼，例如：
-// 	accessToken, err := GetAccessToken()
-// 	if err != nil {
-// 		fmt.Println("獲取 Access Token 失敗:", err)
-// 		return
-// 	}
-
-// 	// 假設的課程提醒數據
-// 	courseData := CourseReminderData{
-// 		CourseName:     "高等數學",
-// 		TeacherName:    "李老師",
-// 		CourseLocation: "教學樓A棟301",
-// 		TimeNumber:     "上午10:00-12:00",
-// 		Note:           "請準時上課，並攜帶計算器。",
-// 	}
-
-// 	err = SendCourseReminder(accessToken, courseData)
-// 	if err != nil {
-// 		fmt.Println("發送課程提醒失敗:", err)
-// 	}
-// }

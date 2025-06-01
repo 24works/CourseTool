@@ -35,7 +35,8 @@ const SemesterStartDate = "2025.02.24" // 您可以根據實際情況修改此�
 
 // Init 函數，用於初始化
 func Init() {
-	fmt.Println(Green + "SDTBU: Initializing..." + Reset)
+	formattedTime := time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: Initializing...%s\n", formattedTime, Green, Reset)
 }
 
 // LoginParams 結構體用於儲存從登入頁面提取的參數
@@ -88,7 +89,8 @@ func GetFormattedClassTime(lessonNumber int) (string, error) {
 			return fmt.Sprintf("%s-%s", schedule.Start, schedule.End), nil
 		}
 	}
-	return "", fmt.Errorf(Yellow+"SDTBU: 未找到節次 %d 對應的時間表資訊。"+Reset, lessonNumber)
+	formattedTime := time.Now().Format("2006/01/02 15:04")
+	return "", fmt.Errorf("%s %sCourseTool: 未找到節次 %d 對應的時間表資訊。%s", formattedTime, Yellow, lessonNumber, Reset)
 }
 
 // goWeekdayToApiSkxq 將 Go 的 time.Weekday 轉換為系統使用的 SKXQ (1-7, 1=Mon, 7=Sun)
@@ -120,7 +122,8 @@ func extractIntFromClassMap(classMap map[string]interface{}, key string) (int, b
 func NewClientSession() (*ClientSession, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return nil, fmt.Errorf(Red+"SDTBU: Failed to create cookie jar: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return nil, fmt.Errorf("%s %sCourseTool: Failed to create cookie jar: %v%s", formattedTime, Red, err, Reset)
 	}
 
 	client := &http.Client{
@@ -140,15 +143,15 @@ func NewClientSession() (*ClientSession, error) {
 // 這些課程也保持了按節次排序的特性。
 func (cs *ClientSession) NextClass(classListJSON []map[string]interface{}) (map[string]interface{}, error) {
 	if len(classListJSON) == 0 {
-		return nil, fmt.Errorf(Yellow + "SDTBU: 沒有課程資訊可供判斷下一節課。" + Reset)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return nil, fmt.Errorf("%s %sCourseTool: 沒有課程資訊可供判斷下一節課。%s", formattedTime, Yellow, Reset)
 	}
 
 	// 獲取當前時間和星期
 	now := time.Now()
 	currentTimeStr := now.Format("15:04") // 格式化為 HH:MM
 	currentSystemSkxq := goWeekdayToApiSkxq(now.Weekday())
-
-	// fmt.Printf(Green+"SDTBU: 當前時間: %s, 今天星期 (系統): %d\n"+Reset, currentTimeStr, currentSystemSkxq)
+	// fmt.Printf(Green+"CourseTool: 當前時間: %s, 今天星期 (系統): %d\n"+Reset, currentTimeStr, currentSystemSkxq)
 
 	// --- 第一部分: 檢查今天的下一節課 ---
 	var todayClasses []map[string]interface{}
@@ -197,19 +200,20 @@ func (cs *ClientSession) NextClass(classListJSON []map[string]interface{}) (map[
 
 			if currentT.Before(classStartT) || (currentT.After(classStartT) && currentT.Before(classEndT)) {
 				_, _ = class["KCMC"].(string) // kcmcStr was used in a commented-out fmt.Printf
-				// fmt.Printf(Green+"SDTBU: 今天的下一節課是: %s (星期: %d, 節次: %d, 時間: %s-%s)\n"+Reset, kcmcStr, currentSystemSkxq, skjc, classStart, classEnd)
+				// fmt.Printf(Green+"CourseTool: 今天的下一節課是: %s (星期: %d, 節次: %d, 時間: %s-%s)\n"+Reset, kcmcStr, currentSystemSkxq, skjc, classStart, classEnd)
 				return class, nil // 直接返回今天的下一節課
 			}
 		}
 	}
 
 	// --- 第二部分: 如果今天沒有更多課程，查找明天的第一節課 ---
-	// fmt.Println(Yellow + "SDTBU: 今天沒有更多課程了，正在查找明天的課程..." + Reset)
+	formattedTime := time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: 今天沒有更多課程了，正在查找明天的課程...%s\n", formattedTime, Yellow, Reset)
 
 	goTomorrowWd := time.Weekday((int(now.Weekday()) + 1) % 7) // 計算明天的 Go Weekday
 	tomorrowSystemSkxq := goWeekdayToApiSkxq(goTomorrowWd)     // 轉換為系統的 SKXQ
 
-	// fmt.Printf(Green+"SDTBU: 查找明天 (星期 %d) 的課程...\n"+Reset, tomorrowSystemSkxq)
+	// fmt.Printf(Green+"CourseTool: 查找明天 (星期 %d) 的課程...\n"+Reset, tomorrowSystemSkxq)
 
 	var tomorrowClasses []map[string]interface{}
 	for _, class := range classListJSON { // classListJSON 已經是排序好的
@@ -227,7 +231,8 @@ func (cs *ClientSession) NextClass(classListJSON []map[string]interface{}) (map[
 
 		skjcTomorrow, ok := extractIntFromClassMap(firstClassTomorrow, "SKJC")
 		if !ok {
-			return nil, fmt.Errorf(Yellow + "SDTBU: 明天第一節課的節次(SKJC)資訊無效。" + Reset)
+			formattedTime := time.Now().Format("2006/01/02 15:04")
+			return nil, fmt.Errorf("%s %sCourseTool: 明天第一節課的節次(SKJC)資訊無效。%s", formattedTime, Yellow, Reset)
 		}
 
 		var classStartTomorrow string
@@ -240,11 +245,12 @@ func (cs *ClientSession) NextClass(classListJSON []map[string]interface{}) (map[
 		}
 
 		if classStartTomorrow == "" {
-			return nil, fmt.Errorf(Yellow+"SDTBU: 未找到明天第一節課 (節次 %d) 的時間表資訊。"+Reset, skjcTomorrow)
+			formattedTime := time.Now().Format("2006/01/02 15:04")
+			return nil, fmt.Errorf("%s %sCourseTool: 未找到明天第一節課 (節次 %d) 的時間表資訊。%s", formattedTime, Yellow, skjcTomorrow, Reset)
 		}
 
 		_, _ = firstClassTomorrow["KCMC"].(string) // kcmcTomorrowStr was used in a commented-out fmt.Printf
-		// fmt.Printf(Green+"SDTBU: 明天的首節課程是: %s (星期: %d, 節次: %d, 時間: %s-%s)\n"+Reset,
+		// fmt.Printf(Green+"CourseTool: 明天的首節課程是: %s (星期: %d, 節次: %d, 時間: %s-%s)\n"+Reset,
 		// 	kcmcTomorrowStr, tomorrowSystemSkxq, skjcTomorrow, classStartTomorrow, classEndTomorrow)
 
 		// 創建副本以添加 Remark
@@ -258,7 +264,8 @@ func (cs *ClientSession) NextClass(classListJSON []map[string]interface{}) (map[
 	}
 
 	// 如果今天和明天都沒有課程
-	return nil, fmt.Errorf(Yellow + "SDTBU: 今天和明天都沒有課程了。" + Reset)
+	formattedTime = time.Now().Format("2006/01/02 15:04")
+	return nil, fmt.Errorf("%s %sCourseTool: 今天和明天都沒有課程了。%s", formattedTime, Yellow, Reset)
 }
 
 // SortClass 根據課程列表對課程進行排序，並返回排序後的課程列表和一個訊息字符串。
@@ -280,7 +287,8 @@ func (cs *ClientSession) SortClass(classListJSON []map[string]interface{}) ([]ma
 			skxq_i = int(skxq_i_float)
 		} else {
 			// 錯誤處理：如果類型不匹配，打印錯誤並假設一個值以避免崩潰
-			fmt.Printf(Red+"錯誤: classListJSON[%d][\"SKXQ\"] 不是 float64，實際類型為 %T。\n"+Reset, i, classListJSON[i]["SKXQ"])
+			formattedTime := time.Now().Format("2006/01/02 15:04")
+			fmt.Printf("%s %s錯誤: classListJSON[%d][\"SKXQ\"] 不是 float64，實際類型為 %T。\n%s", formattedTime, Red, i, classListJSON[i]["SKXQ"], Reset)
 		}
 
 		skjc_i_float, ok_i_skjc := classListJSON[i]["SKJC"].(float64)
@@ -288,7 +296,8 @@ func (cs *ClientSession) SortClass(classListJSON []map[string]interface{}) ([]ma
 		if ok_i_skjc {
 			skjc_i = int(skjc_i_float)
 		} else {
-			fmt.Printf(Red+"錯誤: classListJSON[%d][\"SKJC\"] 不是 float64，實際類型為 %T。\n"+Reset, i, classListJSON[i]["SKJC"])
+			formattedTime := time.Now().Format("2006/01/02 15:04")
+			fmt.Printf("%s %s錯誤: classListJSON[%d][\"SKJC\"] 不是 float64，實際類型為 %T。\n%s", formattedTime, Red, i, classListJSON[i]["SKJC"], Reset)
 		}
 
 		// 獲取第 j 個課程的 SKXQ 和 SKJC，並進行類型斷言
@@ -297,7 +306,8 @@ func (cs *ClientSession) SortClass(classListJSON []map[string]interface{}) ([]ma
 		if ok_j_skxq {
 			skxq_j = int(skxq_j_float)
 		} else {
-			fmt.Printf(Red+"錯誤: classListJSON[%d][\"SKXQ\"] 不是 float64，實際類型為 %T。\n"+Reset, j, classListJSON[j]["SKXQ"])
+			formattedTime := time.Now().Format("2006/01/02 15:04")
+			fmt.Printf("%s %s錯誤: classListJSON[%d][\"SKXQ\"] 不是 float64，實際類型為 %T。\n%s", formattedTime, Red, j, classListJSON[j]["SKXQ"], Reset)
 		}
 
 		skjc_j_float, ok_j_skjc := classListJSON[j]["SKJC"].(float64)
@@ -305,7 +315,8 @@ func (cs *ClientSession) SortClass(classListJSON []map[string]interface{}) ([]ma
 		if ok_j_skjc {
 			skjc_j = int(skjc_j_float)
 		} else {
-			fmt.Printf(Red+"錯誤: classListJSON[%d][\"SKJC\"] 不是 float64，實際類型為 %T。\n"+Reset, j, classListJSON[j]["SKJC"])
+			formattedTime := time.Now().Format("2006/01/02 15:04")
+			fmt.Printf("%s %s錯誤: classListJSON[%d][\"SKJC\"] 不是 float64，實際類型為 %T。\n%s", formattedTime, Red, j, classListJSON[j]["SKJC"], Reset)
 		}
 
 		// 首先比較星期 (SKXQ)
@@ -344,15 +355,17 @@ func (cs *ClientSession) ParseClassList(jsonData string) ([]map[string]interface
 	// 使用 json.Unmarshal 將字符串變量解析到 Go 切片中
 	err := json.Unmarshal([]byte(jsonData), &classList)
 	if err != nil {
-		fmt.Println(Red+"Error unmarshalling classList string:", err, Reset)
-		return nil, fmt.Errorf(Red+"SDTBU: Error unmarshalling classList string: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		fmt.Printf("%s %sError unmarshalling classList string:%s%s\n", formattedTime, Red, err.Error(), Reset)
+		return nil, fmt.Errorf("%s %sCourseTool: Error unmarshalling classList string: %v%s", formattedTime, Red, err, Reset)
 	}
 	return classList, nil
 }
 
 // GetClassbyTime 函數用於發送 POST 請求獲取用戶的本周課程資訊
 func (cs *ClientSession) GetClassbyTime() error {
-	fmt.Println(Blue + "SDTBU: Fetching class information by time..." + Reset)
+	formattedTime := time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: Fetching class information by time...%s\n", formattedTime, Blue, Reset)
 
 	// 請求 URL
 	var requestURL string
@@ -371,14 +384,16 @@ func (cs *ClientSession) GetClassbyTime() error {
 	// 使用 json.Unmarshal 將字符串變量解析到 Go 切片中
 	err := json.Unmarshal([]byte(cs.CalssListUserInfoString), &classListContent)
 	if err != nil {
-		fmt.Println(Red+"Error unmarshalling classList string:", err, Reset)
-		return fmt.Errorf(Red+"SDTBU: Error unmarshalling classListUserInfoString: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		fmt.Printf("%s %sError unmarshalling classList string:%s%s\n", formattedTime, Red, err.Error(), Reset)
+		return fmt.Errorf("%s %sCourseTool: Error unmarshalling classListUserInfoString: %v%s", formattedTime, Red, err, Reset)
 	}
 
 	// 計算當前教學週
 	startDate, err := time.Parse("2006.01.02", SemesterStartDate)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error parsing semester start date: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error parsing semester start date: %v%s", formattedTime, Red, err, Reset)
 	}
 	now := time.Now()
 
@@ -389,12 +404,12 @@ func (cs *ClientSession) GetClassbyTime() error {
 	if daysSinceStart >= 0 {
 		currentLearnWeek = (daysSinceStart / 7) + 1
 	} else {
-		// 如果當前日期早於開學日期，可以根據需求處理，這裡默認為第1周或報錯
-		fmt.Println(Yellow + "SDTBU: Current date is before the semester start date. Defaulting learnWeek to 1." + Reset)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		fmt.Printf("%s %sCourseTool: Current date is before the semester start date. Defaulting learnWeek to 1.%s\n", formattedTime, Yellow, Reset)
 	}
 
 	//測試工具，打印當前周
-	// fmt.Printf(Green+"SDTBU: Current learn week: %d\n"+Reset, currentLearnWeek)
+	// fmt.Printf(Green+"CourseTool: Current learn week: %d\n"+Reset, currentLearnWeek)
 
 	// 構建請求體數據
 	requestBody := map[string]interface{}{
@@ -408,13 +423,15 @@ func (cs *ClientSession) GetClassbyTime() error {
 	// 將請求體數據編碼為 JSON
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error marshalling request body to JSON: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error marshalling request body to JSON: %v%s", formattedTime, Red, err, Reset)
 	}
 
 	// 創建 POST 請求
 	req, err := http.NewRequest("POST", requestURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error creating POST request for GetClassbyTime: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error creating POST request for GetClassbyTime: %v%s", formattedTime, Red, err, Reset)
 	}
 
 	// 設定請求標頭
@@ -424,30 +441,34 @@ func (cs *ClientSession) GetClassbyTime() error {
 	// 發送請求
 	resp, err := cs.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error sending POST request to GetClassbyTime: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error sending POST request to GetClassbyTime: %v%s", formattedTime, Red, err, Reset)
 	}
 	defer resp.Body.Close() // 確保響應主體已關閉
 
-	fmt.Printf(Cyan+"SDTBU: POST request to %s status: %s\n"+Reset, requestURL, resp.Status)
+	formattedTime = time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: POST request to %s status: %s\n%s", formattedTime, Cyan, requestURL, resp.Status, Reset)
 
 	// 讀取響應主體
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error reading GetClassbyTime response body: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error reading GetClassbyTime response body: %v%s", formattedTime, Red, err, Reset)
 	}
 
 	// 記錄Class内容
 	cs.ClassListbyTimeString = string(bodyBytes)
 
-	// fmt.Println(Green + "SDTBU: Class information by time fetched successfully." + Reset)
-	// fmt.Println(Cyan + "SDTBU: Class List by Time String: " + Reset + cs.ClassListbyTimeString)
+	// fmt.Println(Green + "CourseTool: Class information by time fetched successfully." + Reset)
+	// fmt.Println(Cyan + "CourseTool: Class List by Time String: " + Reset + cs.ClassListbyTimeString)
 
 	return nil
 }
 
 // GetClassbyUserInfo 函數用於發送 POST 請求獲取用戶的課程資訊
 func (cs *ClientSession) GetClassbyUserInfo() error {
-	fmt.Println(Blue + "SDTBU: Fetching class information..." + Reset)
+	formattedTime := time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: Fetching class information...%s\n", formattedTime, Blue, Reset)
 
 	// 請求 URL
 	var requestURL string
@@ -469,13 +490,15 @@ func (cs *ClientSession) GetClassbyUserInfo() error {
 	// 將請求體數據編碼為 JSON
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error marshalling request body to JSON: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error marshalling request body to JSON: %v%s", formattedTime, Red, err, Reset)
 	}
 
 	// 創建 POST 請求
 	req, err := http.NewRequest("POST", requestURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error creating POST request for getClassbyUserInfo: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error creating POST request for getClassbyUserInfo: %v%s", formattedTime, Red, err, Reset)
 	}
 
 	// 設定請求標頭
@@ -485,16 +508,19 @@ func (cs *ClientSession) GetClassbyUserInfo() error {
 	// 發送請求
 	resp, err := cs.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error sending POST request to getClassbyUserInfo: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error sending POST request to getClassbyUserInfo: %v%s", formattedTime, Red, err, Reset)
 	}
 	defer resp.Body.Close() // 確保響應主體已關閉
 
-	fmt.Printf(Cyan+"SDTBU: POST request to %s status: %s\n"+Reset, requestURL, resp.Status)
+	formattedTime = time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: POST request to %s status: %s\n%s", formattedTime, Cyan, requestURL, resp.Status, Reset)
 
 	// 讀取響應主體
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error reading getClassbyUserInfo response body: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error reading getClassbyUserInfo response body: %v%s", formattedTime, Red, err, Reset)
 	}
 
 	// 記錄Class内容
@@ -508,7 +534,8 @@ func (cs *ClientSession) GetClassbyUserInfo() error {
 // 然後解析頁面以提取必要的參數（例如 lt, execution, _eventId 值），
 // 最後構建 POST 請求並發送登入資訊。
 func (cs *ClientSession) Login(username, password string) error {
-	fmt.Printf(Green+"SDTBU: Logging in with username: %s\n"+Reset, username)
+	formattedTime := time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: Logging in with username: %s\n%s", formattedTime, Green, username, Reset)
 
 	// --- 1. 執行 GET 請求以獲取登入頁面和相關參數 ---
 	// 宣告 req 變數，以便在後續的 GET 和 POST 請求中重複使用
@@ -519,48 +546,54 @@ func (cs *ClientSession) Login(username, password string) error {
 	getReqURL := "https://zhss.sdtbu.edu.cn/tp_up/"
 	req, err = http.NewRequest("GET", getReqURL, nil)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error creating GET request: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error creating GET request: %v%s", formattedTime, Red, err, Reset)
 	}
 	req.Header.Set("User-Agent", cs.UserAgent)
 
 	// 使用共用的客戶端傳送 GET 請求
 	resp, err = cs.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error making GET request to %s: %v"+Reset, getReqURL, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error making GET request to %s: %v%s", formattedTime, Red, getReqURL, err, Reset)
 	}
 	defer resp.Body.Close() // 確保 GET 請求的響應主體已關閉
 
-	fmt.Printf(Cyan+"SDTBU: GET request to %s status: %s\n"+Reset, getReqURL, resp.Status)
+	formattedTime = time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: GET request to %s status: %s\n%s", formattedTime, Cyan, getReqURL, resp.Status, Reset)
 
 	// 讀取響應主體以提取登入表單的 HTML 內容
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error reading GET response body: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error reading GET response body: %v%s", formattedTime, Red, err, Reset)
 	}
 	htmlBody := string(bodyBytes)
 
 	// POST 請求的 URL 將是提供登入表單的 URL。
 	// 在 GET 請求（以及任何重定向）之後，這在 resp.Request.URL 中可用。
 	postTargetURL := resp.Request.URL.String()
-	fmt.Println(Yellow+"SDTBU: Login form URL (target for POST): "+Reset, postTargetURL)
+	formattedTime = time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: Login form URL (target for POST): %s%s\n", formattedTime, Yellow, postTargetURL, Reset)
 
 	// 2. 從 HTML 內容中提取登入參數 (lt, execution, _eventId)
 	// 這些參數通常是隱藏欄位，用於維持會話狀態或防止 CSRF 攻擊。
 	loginParams := ExtractLoginParameters(htmlBody)
 	if loginParams.Lt == "" || loginParams.Execution == "" || loginParams.EventId == "" {
-		return fmt.Errorf(Red+"SDTBU: Failed to extract all required login parameters. Lt: '%s', Execution: '%s', EventId: '%s'"+Reset,
-			loginParams.Lt, loginParams.Execution, loginParams.EventId)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Failed to extract all required login parameters. Lt: '%s', Execution: '%s', EventId: '%s'%s",
+			formattedTime, Red, loginParams.Lt, loginParams.Execution, loginParams.EventId, Reset)
 	}
-	//fmt.Println(Yellow+"SDTBU: Extracted login parameters:", loginParams, Reset)
+	//fmt.Println(Yellow+"CourseTool: Extracted login parameters:", loginParams, Reset)
 
 	// 3. 準備 POST 請求的表單資料
 	// 根據原代碼邏輯，rsa 值由用戶名、密碼和 lt 值拼接而成，然後進行加密。
 	rsa := fmt.Sprintf("%s%s%s", username, password, loginParams.Lt)
-	//fmt.Println("SDTBU: Prepared RSA value (before encryption):", rsa)
+	//fmt.Println("CourseTool: Prepared RSA value (before encryption):", rsa)
 
 	// 加密 RSA 值，這裡假設 des.StrEnc 函數可用於加密
 	encryptedRSA := des.StrEnc(rsa, "1", "2", "3")
-	//fmt.Println("SDTBU: Encrypted RSA value:", encryptedRSA)
+	//fmt.Println("CourseTool: Encrypted RSA value:", encryptedRSA)
 
 	// 計算用戶名和密碼的長度，用於 POST 請求中的 ul 和 pl 參數
 	ul := utf8.RuneCountInString(username)
@@ -576,7 +609,7 @@ func (cs *ClientSession) Login(username, password string) error {
 	formData.Set("_eventId", loginParams.EventId)
 
 	postDataString := formData.Encode() // 將表單數據編碼為 URL 查詢字符串格式
-	//fmt.Println("SDTBU: POST data:", postDataString)
+	//fmt.Println("CourseTool: POST data:", postDataString)
 
 	// 將 POST 資料字串轉換為 io.Reader
 	postDataReader := strings.NewReader(postDataString)
@@ -585,7 +618,8 @@ func (cs *ClientSession) Login(username, password string) error {
 	// 這裡重新賦值 req，而不是重新宣告
 	req, err = http.NewRequest("POST", postTargetURL, postDataReader)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error creating POST request: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error creating POST request: %v%s", formattedTime, Red, err, Reset)
 	}
 
 	// 設定請求標頭
@@ -595,12 +629,15 @@ func (cs *ClientSession) Login(username, password string) error {
 	// 傳送 POST 請求
 	resp, err = cs.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error sending POST request: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error sending POST request: %v%s", formattedTime, Red, err, Reset)
 	}
 	defer resp.Body.Close() // 確保 POST 響應主體已關閉
 
-	fmt.Printf(Cyan+"SDTBU: POST request to %s status: %s\n"+Reset, req.URL, resp.Status)
-	fmt.Println(Yellow+"SDTBU: Current URL after POST:", resp.Request.URL.String()+Reset) // 列印請求的最終 URL
+	formattedTime = time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: POST request to %s status: %s\n%s", formattedTime, Cyan, req.URL, resp.Status, Reset)
+	formattedTime = time.Now().Format("2006/01/02 15:04")
+	fmt.Printf("%s %sCourseTool: Current URL after POST: %s%s\n", formattedTime, Yellow, resp.Request.URL.String(), Reset) // 列印請求的最終 URL
 
 	cs.reqURL = resp.Request.URL.String() // 儲存最終請求的 URL
 
@@ -612,12 +649,14 @@ func (cs *ClientSession) Login(username, password string) error {
 	// 這裡重新賦值 req，而不是重新宣告
 	req, err = http.NewRequest("GET", resp.Request.URL.String()+"view?m=up", nil)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error creating GET request for dashboard: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error creating GET request for dashboard: %v%s", formattedTime, Red, err, Reset)
 	}
 	req.Header.Set("User-Agent", cs.UserAgent) // 保持 User-Agent 一致
 	resp, err = cs.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf(Red+"SDTBU: Error fetching dashboard page: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		return fmt.Errorf("%s %sCourseTool: Error fetching dashboard page: %v%s", formattedTime, Red, err, Reset)
 	}
 	defer resp.Body.Close()
 
@@ -630,7 +669,8 @@ func (cs *ClientSession) Login(username, password string) error {
 func ExtractLoginParameters(htmlbody string) LoginParams {
 	doc, err := html.Parse(strings.NewReader(htmlbody))
 	if err != nil {
-		log.Printf(Red+"SDTBU: Error parsing HTML: %v"+Reset, err)
+		formattedTime := time.Now().Format("2006/01/02 15:04")
+		log.Printf("%s %sCourseTool: Error parsing HTML: %v%s", formattedTime, Red, err, Reset)
 		return LoginParams{} // 返回一個空的 LoginParams
 	}
 
