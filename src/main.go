@@ -51,7 +51,7 @@ func printBanner() {
 作者：Richard Miku
 版本：v1.0.0
 說明：基於Golang的課程工具，提供課程提醒功能。
-使用：請確保已正確配置環境變數，然後運行此程序。
+使用：請確保已正確配置環境變數，然後運行此程式。
 網址：https://www.ric.moe
 GitHub：https://github.com/RichardMiku/CourseTool
 =============================================================
@@ -289,7 +289,8 @@ func parsePushTimeTable() ([]PushTime, error) {
 }
 
 // runScheduler 負責排程並觸發消息推送
-func runScheduler(session *sdtbu.ClientSession) {
+// 新增 stopChan 參數，用於接收停止訊號
+func runScheduler(stopChan <-chan struct{}) {
 	pushTimes, err := parsePushTimeTable()
 	if err != nil {
 		log.Fatalf(ASNIColor.Red+"錯誤: 解析 PUSH_TIME_TABLE 失敗: %v"+ASNIColor.Reset, err)
@@ -309,6 +310,17 @@ func runScheduler(session *sdtbu.ClientSession) {
 	var lastCheckedDay = time.Now().Day() // 記錄上次檢查的日期，用於每日重置
 
 	for {
+		select {
+		case <-stopChan: // 如果收到停止訊號
+			log.Println(ASNIColor.BrightYellow + "排程器收到停止訊號，正在退出..." + ASNIColor.Reset)
+			globalSchedulerStatus.mu.Lock()
+			globalSchedulerStatus.IsRunning = false
+			globalSchedulerStatus.mu.Unlock()
+			return // 退出 Goroutine
+		default:
+			// 繼續正常執行
+		}
+
 		now := time.Now()
 
 		// 在午夜時重置 pushedToday map
@@ -344,7 +356,18 @@ func runScheduler(session *sdtbu.ClientSession) {
 			globalSchedulerStatus.mu.Unlock()
 
 			log.Printf(ASNIColor.BrightBlue+"下一次推送將在 %s 觸發 (剩餘 %s)。"+ASNIColor.Reset, nextPushTime.Format("15:04:05"), sleepDuration)
-			time.Sleep(sleepDuration) // 休眠直到下一個推送時間
+
+			// 使用 select 監聽停止訊號，同時等待休眠時間
+			select {
+			case <-stopChan:
+				log.Println(ASNIColor.BrightYellow + "排程器收到停止訊號，正在退出..." + ASNIColor.Reset)
+				globalSchedulerStatus.mu.Lock()
+				globalSchedulerStatus.IsRunning = false
+				globalSchedulerStatus.mu.Unlock()
+				return
+			case <-time.After(sleepDuration):
+				// 休眠時間結束，繼續執行推送邏輯
+			}
 
 			// 喚醒後再次檢查時間，以處理輕微延遲或系統時鐘變化
 			currentCheckTime := time.Now()
@@ -353,6 +376,15 @@ func runScheduler(session *sdtbu.ClientSession) {
 			// 檢查當前時間是否在預定時間附近 (例如 +/- 1 分鐘) 且尚未推送
 			if currentCheckTime.After(nextPushTime.Add(-1*time.Minute)) && currentCheckTime.Before(nextPushTime.Add(1*time.Minute)) && !pushedToday[timeStr] {
 				log.Println(ASNIColor.BrightGreen + "觸發課程推送！" + ASNIColor.Reset)
+
+				// 每次推送前重新初始化會話
+				session, err := initializeSession()
+				if err != nil {
+					log.Printf(ASNIColor.Red+"錯誤: 重新初始化會話失敗，跳過本次推送: %v"+ASNIColor.Reset, err)
+					pushedToday[timeStr] = true // 即使失敗也標記為已嘗試推送，避免無限重試
+					continue
+				}
+
 				// 在推送前獲取最新的課程資訊
 				classInfo, err := fetchAndProcessClassData(session)
 				if err != nil {
@@ -384,15 +416,27 @@ func runScheduler(session *sdtbu.ClientSession) {
 			globalSchedulerStatus.mu.Unlock()
 
 			log.Printf(ASNIColor.BrightBlue+"今天所有推送已完成。將在 %s 重新開始排程 (剩餘 %s)。"+ASNIColor.Reset, firstPushTimeTomorrow.Format("2006-01-02 15:04:05"), sleepDuration)
-			time.Sleep(sleepDuration) // 休眠直到明天
+
+			// 使用 select 監聽停止訊號，同時等待休眠時間
+			select {
+			case <-stopChan:
+				log.Println(ASNIColor.BrightYellow + "排程器收到停止訊號，正在退出..." + ASNIColor.Reset)
+				globalSchedulerStatus.mu.Lock()
+				globalSchedulerStatus.IsRunning = false
+				globalSchedulerStatus.mu.Unlock()
+				return
+			case <-time.After(sleepDuration):
+				// 休眠時間結束，繼續執行
+			}
 		}
 	}
 }
 
 // handleUserInput 處理用戶在控制台的輸入
-func handleUserInput(session *sdtbu.ClientSession) {
+// 新增 stopChan 參數，用於發送停止訊號
+func handleUserInput(stopChan chan<- struct{}) {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Println(ASNIColor.BrightGreen + "排程器已啟動。輸入 /nextcourse 查看下一節課，或輸入 /status 檢查狀態，輸入 /clear 清除控制台。" + ASNIColor.Reset)
+	fmt.Println(ASNIColor.BrightGreen + "排程器已啟動。輸入 /nextcourse 查看下一節課，或輸入 /status 檢查狀態，輸入 /clear 清除控制台，輸入 /stop 退出應用程式。" + ASNIColor.Reset)
 	fmt.Print(ASNIColor.BrightBlue + "> " + ASNIColor.Reset) // 初始提示符
 
 	for {
@@ -407,6 +451,13 @@ func handleUserInput(session *sdtbu.ClientSession) {
 		switch strings.ToLower(command) {
 		case "/nextcourse":
 			fmt.Println(ASNIColor.BrightCyan + "正在獲取下一節課程資訊..." + ASNIColor.Reset)
+			// 為 /nextcourse 命令也重新初始化會話，確保其有效性
+			session, err := initializeSession()
+			if err != nil {
+				fmt.Printf(ASNIColor.Red+"錯誤: 無法初始化會話以獲取課程資訊: %v\n"+ASNIColor.Reset, err)
+				continue
+			}
+
 			classInfo, err := fetchAndProcessClassData(session)
 			if err != nil {
 				fmt.Printf(ASNIColor.Red+"錯誤: 無法獲取課程資訊: %v\n"+ASNIColor.Reset, err)
@@ -445,7 +496,13 @@ func handleUserInput(session *sdtbu.ClientSession) {
 			// ANSI escape code to clear the screen and move cursor to home
 			fmt.Print("\033[H\033[2J")
 			printBanner() // 清除後重新打印橫幅
-			fmt.Println(ASNIColor.BrightGreen + "控制台已清除。輸入 /nextcourse 查看下一節課，或輸入 /status 檢查狀態，輸入 /clear 清除控制台。" + ASNIColor.Reset)
+			fmt.Println(ASNIColor.BrightGreen + "控制台已清除。輸入 /nextcourse 查看下一節課，或輸入 /status 檢查狀態，輸入 /clear 清除控制台，輸入 /stop 退出應用程式。" + ASNIColor.Reset)
+		case "/stop": // 新增 /stop 命令
+			fmt.Println(ASNIColor.BrightYellow + "正在停止應用程式..." + ASNIColor.Reset)
+			close(stopChan) // 關閉通道，向 runScheduler 發送停止訊號
+			// 給 runScheduler 一點時間來響應停止訊號
+			time.Sleep(500 * time.Millisecond)
+			os.Exit(0) // 退出應用程式
 		case "": // 如果用戶只按了 Enter
 			globalSchedulerStatus.mu.Lock() // 鎖定互斥鎖以安全讀取狀態
 			isRunning := globalSchedulerStatus.IsRunning
@@ -475,18 +532,15 @@ func main() {
 	// 打印應用程式啟動橫幅
 	printBanner()
 
-	// 初始化 SDTBU 會話並登入
-	session, err := initializeSession()
-	if err != nil {
-		log.Fatalf("%v", err) // 如果會話無法初始化，則終止程式
-	}
-
 	// 調用 update 包中的 CheckForUpdates 函數，檢查應用程式更新
 	update.CheckForUpdates()
 
-	// 在一個新的 Goroutine 中啟動排程器，讓它在背景運行，不阻塞主線程
-	go runScheduler(session)
+	// 創建一個用於停止排程器的通道
+	stopChan := make(chan struct{})
 
-	// 在主 Goroutine 中處理用戶輸入，保持控制台互動
-	handleUserInput(session)
+	// 在一個新的 Goroutine 中啟動排程器，並傳遞停止通道
+	go runScheduler(stopChan)
+
+	// 主 Goroutine 處理用戶輸入，並傳遞停止通道
+	handleUserInput(stopChan)
 }
